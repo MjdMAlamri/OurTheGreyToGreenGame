@@ -1,29 +1,47 @@
 using UnityEngine;
 
+[RequireComponent(typeof(Rigidbody))]
 public class RobotMovement : MonoBehaviour
 {
-    // ·«ÕŸÌ: ·„ ‰÷⁄ √—ﬁ«„« Â‰«° ”‰ Õﬂ„ »Â« „‰ «·Œ«—Ã
-    public float moveSpeed = 10f;
-    public float turnSpeed = 100f;
+    public float speed = 6f;
+    public float verticalSpeed = 6f;
+    public float turnSpeed = 120f;
 
-    void Update()
+    Rigidbody rb;
+
+    void Awake()
     {
-        // 1. «·ﬁ—«¡… «·ÿ»Ì⁄Ì… »œÊ‰ √Ì ⁄ﬂ”
-        float moveForward = Input.GetAxis("Vertical") * moveSpeed * Time.deltaTime;
-        float turn = Input.GetAxis("Horizontal") * turnSpeed * Time.deltaTime;
+        rb = GetComponent<Rigidbody>();
 
-        // 2.  ÿ»Ìﬁ «·Õ—ﬂ…
-        transform.Translate(0, 0, moveForward);
-        transform.Rotate(0, turn, 0);
+        rb.useGravity = false;
+        rb.isKinematic = false;
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
 
-        // 3. «·ÿÌ—«‰
-        if (Input.GetKey(KeyCode.Space))
+        rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+    }
+
+    void FixedUpdate()
+    {
+        float forward = Input.GetAxis("Vertical");    // W / S
+        float turn = Input.GetAxis("Horizontal");     // A / D
+
+        float vertical = 0f;
+        if (Input.GetKey(KeyCode.E)) vertical = 1f;   // UP
+        if (Input.GetKey(KeyCode.Q)) vertical = -1f;  // DOWN
+
+        Vector3 velocity =
+            transform.forward * forward * speed +
+            Vector3.up * vertical * verticalSpeed;
+
+        rb.linearVelocity = velocity;
+
+        if (Mathf.Abs(turn) > 0.01f)
         {
-            transform.Translate(Vector3.up * moveSpeed * Time.deltaTime);
-        }
-        else if (Input.GetKey(KeyCode.LeftShift))
-        {
-            transform.Translate(Vector3.down * moveSpeed * Time.deltaTime);
+            rb.MoveRotation(
+                rb.rotation *
+                Quaternion.Euler(0f, turn * turnSpeed * Time.fixedDeltaTime, 0f)
+            );
         }
     }
 }
