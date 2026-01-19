@@ -8,6 +8,12 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/MyGame/Scenes/Homepage-MINE.unity
     guid: 99c9720ab356a0642a771bea13969a05
+  - enabled: 1
+    path: Assets/TheGreyToGreenGame/Scenes/Homepage.unity
+    guid: a3d93041507694ed3ad0407537fcface
+  - enabled: 1
+    path: Assets/TheGreyToGreenGame/Scenes/Drone.y.unity
+    guid: d35c120fcc7b5af4899559600ce60ea3
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0
