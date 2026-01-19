@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 [RequireComponent(typeof(Rigidbody))]
 public class RobotMovement : MonoBehaviour
@@ -12,36 +12,44 @@ public class RobotMovement : MonoBehaviour
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
-
         rb.useGravity = false;
         rb.isKinematic = false;
-        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
-        rb.interpolation = RigidbodyInterpolation.Interpolate;
 
-        rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+        // إعدادات الثبات
+        rb.constraints = RigidbodyConstraints.FreezeRotation;
+
+        // (مهم) رفعنا الاحتكاك برمجياً أيضاً للاحتياط
+        rb.linearDamping = 10f;
+        rb.angularDamping = 10f;
     }
 
     void FixedUpdate()
     {
-        float forward = Input.GetAxis("Vertical");    // W / S
-        float turn = Input.GetAxis("Horizontal");     // A / D
+        // 1. تصفير السرعة الفيزيائية تماماً (الفرامل) 🛑
+        // هذا السطر يمنع الروبوت من الانزلاق أو الطيران بعد الاصطدام
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
 
+        // 2. قراءة المدخلات
+        float forward = Input.GetAxis("Vertical");
+        float turn = Input.GetAxis("Horizontal");
         float vertical = 0f;
-        if (Input.GetKey(KeyCode.E)) vertical = 1f;   // UP
-        if (Input.GetKey(KeyCode.Q)) vertical = -1f;  // DOWN
+        if (Input.GetKey(KeyCode.E)) vertical = 1f;
+        if (Input.GetKey(KeyCode.Q)) vertical = -1f;
 
-        Vector3 velocity =
+        // 3. التحريك اليدوي
+        Vector3 moveDirection =
             transform.forward * forward * speed +
-            Vector3.up * vertical * verticalSpeed;
+            transform.up * vertical * verticalSpeed;
 
-        rb.linearVelocity = velocity;
+        // ننقله للموقع الجديد
+        rb.MovePosition(rb.position + moveDirection * Time.fixedDeltaTime);
 
+        // 4. الدوران
         if (Mathf.Abs(turn) > 0.01f)
         {
-            rb.MoveRotation(
-                rb.rotation *
-                Quaternion.Euler(0f, turn * turnSpeed * Time.fixedDeltaTime, 0f)
-            );
+            Quaternion turnRotation = Quaternion.Euler(0f, turn * turnSpeed * Time.fixedDeltaTime, 0f);
+            rb.MoveRotation(rb.rotation * turnRotation);
         }
     }
 }
