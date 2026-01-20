@@ -1,22 +1,28 @@
 ﻿using UnityEngine;
-using TMPro; // ضروري جداً
+using TMPro;
 
 public class RobotCollector : MonoBehaviour
 {
     [Header("Timer Settings")]
     public float gameDuration = 120f;
     private float timeRemaining;
-    private bool isTimerRunning = true;
+    private bool isTimerRunning = false;
 
     [Header("Targets")]
     public int targetTires = 2;
     public int targetBoxes = 2;
     public int targetTrash = 2;
 
-    // العدادات الداخلية
-    int tires = 0;
-    int boxes = 0;
-    int trash = 0;
+    private int tires = 0;
+    private int boxes = 0;
+    private int trash = 0;
+
+    private bool missionCompleted = false;
+
+    // Track completion so audio/checkmark happens ONCE
+    private bool trashDone = false;
+    private bool boxesDone = false;
+    private bool tiresDone = false;
 
     [Header("Folders")]
     public GameObject trashFolder;
@@ -27,18 +33,43 @@ public class RobotCollector : MonoBehaviour
     public GameObject dirtyCamera;
     public GameObject cleanCamera;
 
-    [Header("UI System (نظام النصوص)")]
-    // 1. النص المثبت في الكانفس (للتايمر)
-    public TextMeshProUGUI timerTextUI;
+    [Header("UI System")]
+    public TextMeshProUGUI timerTextUI;   // ONLY time
+    public TextMeshPro robotHeadText;     // optional
 
-    // 2. النص العائم فوق الروبوت (للعدادات)
-    public TextMeshPro robotHeadText;
+    [Header("UI Panels")]
+    public GameObject startUIPanel;
+    public GameObject loseUIPanel;
+    public GameObject winUIPanel; // optional
+
+    [Header("To-Do List UI (Top)")]
+    public TextMeshProUGUI todoTrashText;
+    public TextMeshProUGUI todoBoxesText;
+    public TextMeshProUGUI todoTiresText;
+
+    [Header("Checkmarks (enable when done)")]
+    public GameObject trashCheckMark;
+    public GameObject boxesCheckMark;
+    public GameObject tiresCheckMark;
+
+    [Header("SFX (one-shots)")]
+    public AudioSource sfxSource;
+    public AudioClip objectiveCompleteClip; // plays when each objective completes (trash/box/tire)
+
+    [Header("Seed SFX (two stages)")]
+    public AudioClip seedAppearClip;   // plays when seed appears (after all objectives)
+    public AudioClip seedPlantedClip;  // plays when player collides with FinalSeed
+
+    [Header("Environment Audio (looping)")]
+    public AudioSource envSource;      // separate AudioSource recommended (loop)
+    public AudioClip dirtyEnvLoop;     // plays while cleaning
+    public AudioClip cleanEnvLoop;     // plays after planting seed
 
     void Start()
     {
         timeRemaining = gameDuration;
 
-        // إعدادات البيئة
+        // Environment setup
         if (forestFolder != null) forestFolder.SetActive(false);
         if (seedObject != null) seedObject.SetActive(false);
         if (trashFolder != null) trashFolder.SetActive(true);
@@ -46,30 +77,55 @@ public class RobotCollector : MonoBehaviour
         if (dirtyCamera != null) dirtyCamera.SetActive(true);
         if (cleanCamera != null) cleanCamera.SetActive(false);
 
-        // تحديث النص فوق الروبوت لأول مرة
+        if (loseUIPanel != null) loseUIPanel.SetActive(false);
+        if (winUIPanel != null) winUIPanel.SetActive(false);
+
+        // Hide checkmarks at start
+        if (trashCheckMark != null) trashCheckMark.SetActive(false);
+        if (boxesCheckMark != null) boxesCheckMark.SetActive(false);
+        if (tiresCheckMark != null) tiresCheckMark.SetActive(false);
+
+        // Start dirty environment loop (player is in cleaning phase)
+        PlayEnvLoop(dirtyEnvLoop);
+
+        UpdateTimerUI();
         UpdateRobotText();
+        UpdateTodoUI();
     }
 
     void Update()
     {
-        // تحديث التايمر (في الكانفس)
-        if (isTimerRunning)
-        {
-            if (timeRemaining > 0)
-            {
-                timeRemaining -= Time.deltaTime;
-                UpdateTimerUI(); // دالة خاصة للتايمر
-            }
-            else
-            {
-                timeRemaining = 0;
-                isTimerRunning = false;
-                UpdateTimerUI();
+        if (!isTimerRunning) return;
 
-                // عند الخسارة
-                if (timerTextUI != null) timerTextUI.text = "TIME'S UP!";
+        if (timeRemaining > 0)
+        {
+            timeRemaining -= Time.deltaTime;
+            if (timeRemaining < 0) timeRemaining = 0;
+            UpdateTimerUI();
+        }
+        else
+        {
+            timeRemaining = 0;
+            isTimerRunning = false;
+            UpdateTimerUI(); // stays "00:00" only
+
+            if (!missionCompleted)
+            {
+                ShowLoseUI();
             }
         }
+    }
+
+    // Button calls this
+    public void StartTimer()
+    {
+        timeRemaining = gameDuration;
+        isTimerRunning = true;
+        UpdateTimerUI();
+
+        if (startUIPanel != null) startUIPanel.SetActive(false);
+        if (loseUIPanel != null) loseUIPanel.SetActive(false);
+        if (winUIPanel != null) winUIPanel.SetActive(false);
     }
 
     private void OnTriggerEnter(Collider other)
@@ -96,68 +152,129 @@ public class RobotCollector : MonoBehaviour
         }
         else if (other.CompareTag("FinalSeed"))
         {
+            // Second stage: seed planted
+            if (sfxSource != null && seedPlantedClip != null)
+                sfxSource.PlayOneShot(seedPlantedClip);
+
             PlantTheSeed();
             Destroy(other.gameObject);
         }
 
         if (collectedSomething)
         {
-            UpdateRobotText(); // تحديث النص فوق الروبوت عند الجمع
-            CheckProgress();
+            UpdateRobotText();
+            UpdateTodoUI();
+            CheckObjectiveCompletion(); // audio + checkmarks
+            CheckProgress();            // seed appear logic
         }
     }
 
-    // --- دالة 1: تحديث التايمر فقط (في الكانفس) ---
+    // Timer UI: ONLY time
     void UpdateTimerUI()
     {
-        if (timerTextUI != null)
-        {
-            int minutes = Mathf.FloorToInt(timeRemaining / 60);
-            int seconds = Mathf.FloorToInt(timeRemaining % 60);
-            timerTextUI.text = string.Format("{0:00}:{1:00}", minutes, seconds);
-        }
+        if (timerTextUI == null) return;
+
+        int minutes = Mathf.FloorToInt(timeRemaining / 60);
+        int seconds = Mathf.FloorToInt(timeRemaining % 60);
+        timerTextUI.text = string.Format("{0:00}:{1:00}", minutes, seconds);
     }
 
-    // --- دالة 2: تحديث العدادات (فوق الروبوت) ---
+    // Optional text above robot
     void UpdateRobotText()
     {
-        if (robotHeadText != null)
-        {
-            int remTires = Mathf.Max(0, targetTires - tires);
-            int remBoxes = Mathf.Max(0, targetBoxes - boxes);
-            int remTrash = Mathf.Max(0, targetTrash - trash);
+        if (robotHeadText == null) return;
 
-            robotHeadText.text = $"Tires: {remTires}\n" +
-                                 $"Boxes: {remBoxes}\n" +
-                                 $"Trash: {remTrash}";
+        int remTires = Mathf.Max(0, targetTires - tires);
+        int remBoxes = Mathf.Max(0, targetBoxes - boxes);
+        int remTrash = Mathf.Max(0, targetTrash - trash);
+
+        robotHeadText.text = $"Tires: {remTires}\nBoxes: {remBoxes}\nTrash: {remTrash}";
+    }
+
+    // To-do list UI
+    void UpdateTodoUI()
+    {
+        if (todoTrashText != null)
+            todoTrashText.text = $"Collect {targetTrash} Trash ({Mathf.Clamp(trash, 0, targetTrash)}/{targetTrash})";
+
+        if (todoBoxesText != null)
+            todoBoxesText.text = $"Collect {targetBoxes} Boxes ({Mathf.Clamp(boxes, 0, targetBoxes)}/{targetBoxes})";
+
+        if (todoTiresText != null)
+            todoTiresText.text = $"Collect {targetTires} Tires ({Mathf.Clamp(tires, 0, targetTires)}/{targetTires})";
+    }
+
+    // Objective completion: play sound + show checkmark ONCE per objective
+    void CheckObjectiveCompletion()
+    {
+        if (!trashDone && trash >= targetTrash)
+        {
+            trashDone = true;
+            if (trashCheckMark != null) trashCheckMark.SetActive(true);
+            PlayObjectiveCompleteSFX();
+        }
+
+        if (!boxesDone && boxes >= targetBoxes)
+        {
+            boxesDone = true;
+            if (boxesCheckMark != null) boxesCheckMark.SetActive(true);
+            PlayObjectiveCompleteSFX();
+        }
+
+        if (!tiresDone && tires >= targetTires)
+        {
+            tiresDone = true;
+            if (tiresCheckMark != null) tiresCheckMark.SetActive(true);
+            PlayObjectiveCompleteSFX();
         }
     }
 
+    void PlayObjectiveCompleteSFX()
+    {
+        if (sfxSource != null && objectiveCompleteClip != null)
+            sfxSource.PlayOneShot(objectiveCompleteClip);
+    }
+
+    // When all objectives complete: seed appears + play "before seed" sound
     void CheckProgress()
     {
+        if (missionCompleted) return;
+
         if (tires >= targetTires && boxes >= targetBoxes && trash >= targetTrash)
         {
+            missionCompleted = true;
+            isTimerRunning = false; // stop timer when objectives complete (your original behavior)
+
             if (seedObject != null && !seedObject.activeSelf)
             {
                 seedObject.SetActive(true);
-                isTimerRunning = false;
 
-                // رسائل الفوز
-                if (timerTextUI != null)
-                {
-                    timerTextUI.color = Color.green;
-                    timerTextUI.text = "YOU WIN!";
-                }
+                if (sfxSource != null && seedAppearClip != null)
+                    sfxSource.PlayOneShot(seedAppearClip);
+            }
 
-                if (robotHeadText != null)
-                {
-                    robotHeadText.color = Color.green;
-                    robotHeadText.text = "Find Seed! 🌱";
-                }
+            // Do NOT change timer text. Show a win panel if you want:
+            if (winUIPanel != null) winUIPanel.SetActive(true);
+
+            if (robotHeadText != null)
+            {
+                robotHeadText.color = Color.green;
+                robotHeadText.text = "Find Seed! 🌱";
             }
         }
     }
 
+    void ShowLoseUI()
+    {
+        // timerTextUI remains time only
+        if (loseUIPanel != null) loseUIPanel.SetActive(true);
+
+        if (robotHeadText != null) robotHeadText.gameObject.SetActive(false);
+    }
+
+    // After player collides with FinalSeed:
+    // - switch environment objects/cameras
+    // - switch environment loop to clean sound
     void PlantTheSeed()
     {
         if (trashFolder != null) trashFolder.SetActive(false);
@@ -166,8 +283,25 @@ public class RobotCollector : MonoBehaviour
         if (dirtyCamera != null) dirtyCamera.SetActive(false);
         if (cleanCamera != null) cleanCamera.SetActive(true);
 
-        // إخفاء النصوص عند النهاية
+        // Switch looping environment sound to "clean"
+        PlayEnvLoop(cleanEnvLoop);
+
+        // Hide texts at the end
         if (timerTextUI != null) timerTextUI.gameObject.SetActive(false);
         if (robotHeadText != null) robotHeadText.gameObject.SetActive(false);
+    }
+
+    // Helper: play a looping environment clip safely
+    void PlayEnvLoop(AudioClip clip)
+    {
+        if (envSource == null || clip == null) return;
+
+        // If already playing this clip, do nothing
+        if (envSource.clip == clip && envSource.isPlaying) return;
+
+        envSource.Stop();
+        envSource.clip = clip;
+        envSource.loop = true;
+        envSource.Play();
     }
 }
