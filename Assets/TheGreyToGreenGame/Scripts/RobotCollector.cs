@@ -287,7 +287,7 @@ public class RobotCollector : MonoBehaviour
             // 1. رسالة الفوز في النص الأول
             if (todoTrashText != null)
             {
-                todoTrashText.text = "Great Job!\nFind the Seed 🌱";
+                todoTrashText.text = "Great Job!\nFind the Seed ";
                 todoTrashText.color = Color.green;
             }
             // 2. إخفاء النصوص الأخرى
@@ -410,10 +410,10 @@ public class RobotCollector : MonoBehaviour
         if (timerTickSource == null || timerTickClip == null) return;
         if (timerTickSource.isPlaying) return;
         timerTickSource.clip = timerTickClip;
+
         timerTickSource.loop = true;
         timerTickSource.Play();
     }
-
     void StopTimerTick()
     {
         if (timerTickSource != null) timerTickSource.Stop();
