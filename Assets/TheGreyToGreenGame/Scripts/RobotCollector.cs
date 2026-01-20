@@ -1,8 +1,13 @@
-﻿using UnityEngine;
+﻿using System.Collections;
+using UnityEngine;
 using TMPro;
 
 public class RobotCollector : MonoBehaviour
 {
+    // ---------- GAME STATES ----------
+    private enum GameState { Map, HowToPlay, Playing, Transition, Ended }
+    private GameState state = GameState.Map;
+
     [Header("Timer Settings")]
     public float gameDuration = 120f;
     private float timeRemaining;
@@ -13,20 +18,16 @@ public class RobotCollector : MonoBehaviour
     public int targetBoxes = 2;
     public int targetTrash = 2;
 
-    private int tires = 0;
-    private int boxes = 0;
-    private int trash = 0;
+    private int tires = 0, boxes = 0, trash = 0;
 
     // Objectives completed => seed spawned
     private bool objectivesCompleted = false;
 
-    // Seed picked => final win
+    // Seed picked => final transition started
     private bool seedPickedUp = false;
 
     // Track completion so audio/checkmark happens ONCE
-    private bool trashDone = false;
-    private bool boxesDone = false;
-    private bool tiresDone = false;
+    private bool trashDone = false, boxesDone = false, tiresDone = false;
 
     [Header("Folders")]
     public GameObject trashFolder;
@@ -34,20 +35,29 @@ public class RobotCollector : MonoBehaviour
     public GameObject seedObject;
 
     [Header("Cameras")]
-    public GameObject dirtyCamera;
-    public GameObject cleanCamera;
+    public GameObject dirtyCamera;  // gray camera (Main Camera)
+    public GameObject cleanCamera;  // colored camera (Clean Camera)
+
+    [Header("Post Processing")]
+    public GameObject globalVolumeObject; // drag "Global Volume" here
+
+    [Header("Freeze Player (optional)")]
+    public MonoBehaviour playerMovementScript; // drag RobotMovement script here
+    public Rigidbody playerRb;                 // optional hard-freeze
 
     [Header("UI System")]
     public TextMeshProUGUI timerTextUI;   // ONLY time
     public TextMeshPro robotHeadText;
 
-    [Header("UI Panels")]
-    public GameObject startUIPanel;
-    public GameObject loseUIPanel;
-    public GameObject winUIPanel; // show AFTER seed is picked
+    [Header("UI Canvases / Panels")]
+    public GameObject mapCanvas;          // MapCanvas
+    public GameObject howToPlayCanvas;    // HowtoPlayCanvas
+    public GameObject timerCanvas;        // TimerCanvas
+    public GameObject todoCanvasOrPanel;  // Todo List
+    public GameObject loseUIPanel;        // LoseCanvas (panel/canvas)
+    public GameObject winUIPanel;         // WinCanvas (panel/canvas)
 
     [Header("To-Do List UI (Top)")]
-    public GameObject todoCanvasOrPanel; // whole ToDo canvas/panel to hide on win
     public TextMeshProUGUI todoTrashText;
     public TextMeshProUGUI todoBoxesText;
     public TextMeshProUGUI todoTiresText;
@@ -75,39 +85,43 @@ public class RobotCollector : MonoBehaviour
     public AudioSource timerTickSource; // separate loop for "tic tic"
     public AudioClip timerTickClip;
 
+    [Header("Seed Pickup Transition (Explosion/Loader)")]
+    public GameObject transitionCanvas;     // full-screen loader/explosion UI
+    public float transitionDuration = 2.0f; // seconds
+    public AudioSource transitionSource;    // separate source recommended
+    public AudioClip transitionClip;        // explosion / whoosh / etc
+
     void Start()
     {
         timeRemaining = gameDuration;
 
-        // Environment setup
+        // World default
         if (forestFolder != null) forestFolder.SetActive(false);
         if (seedObject != null) seedObject.SetActive(false);
         if (trashFolder != null) trashFolder.SetActive(true);
 
-        if (dirtyCamera != null) dirtyCamera.SetActive(true);
-        if (cleanCamera != null) cleanCamera.SetActive(false);
-
+        // UI default
         if (loseUIPanel != null) loseUIPanel.SetActive(false);
         if (winUIPanel != null) winUIPanel.SetActive(false);
+        if (transitionCanvas != null) transitionCanvas.SetActive(false);
 
-        // Hide checkmarks at start
+        // Checkmarks default
         if (trashCheckMark != null) trashCheckMark.SetActive(false);
         if (boxesCheckMark != null) boxesCheckMark.SetActive(false);
         if (tiresCheckMark != null) tiresCheckMark.SetActive(false);
 
-        // Start dirty ambience
-        PlayEnvLoop(dirtyEnvLoop);
-
-        // Timer is paused until Start button
         StopTimerTick();
-
         UpdateTimerUI();
         UpdateRobotText();
         UpdateTodoUI();
+
+        // Start at MAP state
+        EnterMapState();
     }
 
     void Update()
     {
+        if (state != GameState.Playing) return;
         if (!isTimerRunning) return;
 
         if (timeRemaining > 0)
@@ -121,31 +135,129 @@ public class RobotCollector : MonoBehaviour
             timeRemaining = 0;
             isTimerRunning = false;
             UpdateTimerUI();
-
             StopTimerTick();
 
-            // Lose only if seed not picked
             if (!seedPickedUp)
                 ShowLoseUI();
         }
     }
 
-    // Button calls this
-    public void StartTimer()
+    // ---------------- BUTTONS ----------------
+    // MapCanvas button -> calls this
+    public void GoToHowToPlay()
     {
+        if (state != GameState.Map) return;
+        EnterHowToPlayState();
+    }
+
+    // HowtoPlayCanvas play button -> calls this
+    public void StartGame()
+    {
+        if (state != GameState.HowToPlay) return;
+        EnterPlayingState();
+    }
+
+    // ---------------- STATES ----------------
+    void EnterMapState()
+    {
+        state = GameState.Map;
+
+        // UI
+        if (mapCanvas != null) mapCanvas.SetActive(true);
+        if (howToPlayCanvas != null) howToPlayCanvas.SetActive(false);
+        if (timerCanvas != null) timerCanvas.SetActive(false);
+        if (todoCanvasOrPanel != null) todoCanvasOrPanel.SetActive(false);
+        if (transitionCanvas != null) transitionCanvas.SetActive(false);
+
+        // Cameras: show clean preview
+        if (cleanCamera != null) cleanCamera.SetActive(true);
+        if (dirtyCamera != null) dirtyCamera.SetActive(false);
+
+        // No gray post
+        if (globalVolumeObject != null) globalVolumeObject.SetActive(false);
+
+        // Freeze player
+        FreezePlayer(true);
+
+        // No timer
+        isTimerRunning = false;
+        StopTimerTick();
+    }
+
+    void EnterHowToPlayState()
+    {
+        state = GameState.HowToPlay;
+
+        // UI
+        if (mapCanvas != null) mapCanvas.SetActive(false);
+        if (howToPlayCanvas != null) howToPlayCanvas.SetActive(true);
+        if (timerCanvas != null) timerCanvas.SetActive(false);
+        if (todoCanvasOrPanel != null) todoCanvasOrPanel.SetActive(false);
+        if (transitionCanvas != null) transitionCanvas.SetActive(false);
+
+        // Show clean camera colors
+        if (cleanCamera != null) cleanCamera.SetActive(true);
+        if (dirtyCamera != null) dirtyCamera.SetActive(false);
+
+        // Keep gray OFF
+        if (globalVolumeObject != null) globalVolumeObject.SetActive(false);
+
+        // Freeze player
+        FreezePlayer(true);
+
+        isTimerRunning = false;
+        StopTimerTick();
+    }
+
+    void EnterPlayingState()
+    {
+        state = GameState.Playing;
+
+        // UI
+        if (mapCanvas != null) mapCanvas.SetActive(false);
+        if (howToPlayCanvas != null) howToPlayCanvas.SetActive(false);
+        if (timerCanvas != null) timerCanvas.SetActive(true);
+        if (todoCanvasOrPanel != null) todoCanvasOrPanel.SetActive(true);
+
+        if (loseUIPanel != null) loseUIPanel.SetActive(false);
+        if (winUIPanel != null) winUIPanel.SetActive(false);
+        if (transitionCanvas != null) transitionCanvas.SetActive(false);
+
+        // Switch to gray camera
+        if (cleanCamera != null) cleanCamera.SetActive(false);
+        if (dirtyCamera != null) dirtyCamera.SetActive(true);
+
+        // Enable gray post (Global Volume)
+        if (globalVolumeObject != null) globalVolumeObject.SetActive(true);
+
+        // Unfreeze player
+        FreezePlayer(false);
+
+        // Start timer + tick + dirty ambience
         timeRemaining = gameDuration;
         isTimerRunning = true;
         UpdateTimerUI();
-
         StartTimerTick();
-
-        if (startUIPanel != null) startUIPanel.SetActive(false);
-        if (loseUIPanel != null) loseUIPanel.SetActive(false);
-        if (winUIPanel != null) winUIPanel.SetActive(false);
+        PlayEnvLoop(dirtyEnvLoop);
     }
 
+    void FreezePlayer(bool freeze)
+    {
+        if (playerMovementScript != null)
+            playerMovementScript.enabled = !freeze;
+
+        if (playerRb != null)
+        {
+            playerRb.linearVelocity = Vector3.zero;
+            playerRb.angularVelocity = Vector3.zero;
+            playerRb.isKinematic = freeze;
+        }
+    }
+
+    // ---------------- COLLISIONS ----------------
     private void OnTriggerEnter(Collider other)
     {
+        if (state != GameState.Playing) return;
         if (seedPickedUp) return;
 
         bool collectedSomething = false;
@@ -171,20 +283,10 @@ public class RobotCollector : MonoBehaviour
         else if (other.CompareTag("FinalSeed"))
         {
             seedPickedUp = true;
-
-            // Stop ticking once final action happens
-            StopTimerTick();
-
-            // Visual/world switch first
-            PlantTheSeedVisuals();
-
-            // Start clean env + congrats EXACTLY together
-            PlayCleanEnvAndCongratsTogether();
-
-            // Hide todo + show win
-            HideTodoAndShowWinUI();
-
             Destroy(other.gameObject);
+
+            // Start explosion/loader transition then reveal green land
+            StartCoroutine(SeedPickupTransition());
             return;
         }
 
@@ -193,11 +295,50 @@ public class RobotCollector : MonoBehaviour
             UpdateRobotText();
             UpdateTodoUI();
             CheckObjectiveCompletion();
-            CheckProgress(); // spawns seed
+            CheckProgress();
         }
     }
 
-    // Timer UI: ONLY time
+    // ---------------- TRANSITION SEQUENCE ----------------
+    private IEnumerator SeedPickupTransition()
+    {
+        state = GameState.Transition;
+
+        // Stop gameplay + freeze
+        isTimerRunning = false;
+        StopTimerTick();
+        FreezePlayer(true);
+
+        // Hide HUD
+        if (timerCanvas != null) timerCanvas.SetActive(false);
+        if (todoCanvasOrPanel != null) todoCanvasOrPanel.SetActive(false);
+
+        // Show transition UI
+        if (transitionCanvas != null) transitionCanvas.SetActive(true);
+
+        // Play explosion/transition sound
+        if (transitionSource != null && transitionClip != null)
+            transitionSource.PlayOneShot(transitionClip);
+
+        // Wait
+        yield return new WaitForSeconds(transitionDuration);
+
+        // Hide transition UI
+        if (transitionCanvas != null) transitionCanvas.SetActive(false);
+
+        // Reveal green land + switch to clean view
+        PlantTheSeedVisuals();
+
+        // Play clean env + congrats together (sync)
+        PlayCleanEnvAndCongratsTogether();
+
+        // Show win UI at the end
+        if (winUIPanel != null) winUIPanel.SetActive(true);
+
+        state = GameState.Ended;
+    }
+
+    // ---------------- UI UPDATES ----------------
     void UpdateTimerUI()
     {
         if (timerTextUI == null) return;
@@ -206,19 +347,15 @@ public class RobotCollector : MonoBehaviour
         timerTextUI.text = string.Format("{0:00}:{1:00}", minutes, seconds);
     }
 
-    // Optional text above robot
     void UpdateRobotText()
     {
         if (robotHeadText == null) return;
-
         int remTires = Mathf.Max(0, targetTires - tires);
         int remBoxes = Mathf.Max(0, targetBoxes - boxes);
         int remTrash = Mathf.Max(0, targetTrash - trash);
-
         robotHeadText.text = $"Tires: {remTires}\nBoxes: {remBoxes}\nTrash: {remTrash}";
     }
 
-    // To-do list UI
     void UpdateTodoUI()
     {
         if (todoTrashText != null)
@@ -229,7 +366,7 @@ public class RobotCollector : MonoBehaviour
             todoTiresText.text = $"Collect {targetTires} Tires ({Mathf.Clamp(tires, 0, targetTires)}/{targetTires})";
     }
 
-    // Objective completion: play sound + show checkmark ONCE per objective
+    // ---------------- OBJECTIVES ----------------
     void CheckObjectiveCompletion()
     {
         if (!trashDone && trash >= targetTrash)
@@ -254,7 +391,6 @@ public class RobotCollector : MonoBehaviour
         }
     }
 
-    // When all objectives complete: seed appears + play seed appear sound
     void CheckProgress()
     {
         if (objectivesCompleted) return;
@@ -263,7 +399,7 @@ public class RobotCollector : MonoBehaviour
         {
             objectivesCompleted = true;
 
-            // Keep your current behavior: stop timer here
+            // Stop timer when objectives complete (your behavior)
             isTimerRunning = false;
             StopTimerTick();
 
@@ -281,37 +417,40 @@ public class RobotCollector : MonoBehaviour
         }
     }
 
+    // ---------------- WIN/LOSE ----------------
     void ShowLoseUI()
     {
+        state = GameState.Ended;
+
         if (loseUIPanel != null) loseUIPanel.SetActive(true);
-        if (robotHeadText != null) robotHeadText.gameObject.SetActive(false);
+        FreezePlayer(true);
 
-        // Optional: hide todo on lose too
-        // if (todoCanvasOrPanel != null) todoCanvasOrPanel.SetActive(false);
+        // Optionally switch to clean camera for lose screen
+        // if (dirtyCamera != null) dirtyCamera.SetActive(false);
+        // if (cleanCamera != null) cleanCamera.SetActive(true);
     }
 
-    void HideTodoAndShowWinUI()
-    {
-        if (todoCanvasOrPanel != null) todoCanvasOrPanel.SetActive(false);
-        if (winUIPanel != null) winUIPanel.SetActive(true);
-        isTimerRunning = false;
-    }
+    // After transition, we show winUIPanel in coroutine
 
-    // Visual/world switch ONLY (no audio here)
+    // ---------------- WORLD SWITCH ----------------
+    // Final stage reveal
     void PlantTheSeedVisuals()
     {
         if (trashFolder != null) trashFolder.SetActive(false);
         if (forestFolder != null) forestFolder.SetActive(true);
 
+        // Switch to clean camera for final green stage
         if (dirtyCamera != null) dirtyCamera.SetActive(false);
         if (cleanCamera != null) cleanCamera.SetActive(true);
 
-        // Optional: hide texts at the end
-        if (timerTextUI != null) timerTextUI.gameObject.SetActive(false);
+        // Turn off gray post processing
+        if (globalVolumeObject != null) globalVolumeObject.SetActive(false);
+
+        // Hide robot text if you want
         if (robotHeadText != null) robotHeadText.gameObject.SetActive(false);
     }
 
-    // Start clean env loop + congrats sound at the same DSP time (overlap guaranteed)
+    // ---------------- AUDIO ----------------
     void PlayCleanEnvAndCongratsTogether()
     {
         if (envSource == null || cleanEnvLoop == null) return;
@@ -319,20 +458,17 @@ public class RobotCollector : MonoBehaviour
 
         double startTime = AudioSettings.dspTime + 0.05;
 
-        // ENV (loop)
         envSource.Stop();
         envSource.clip = cleanEnvLoop;
         envSource.loop = true;
         envSource.PlayScheduled(startTime);
 
-        // Congrats (one-shot)
         congratsSource.Stop();
         congratsSource.clip = congratsClip;
         congratsSource.loop = false;
         congratsSource.PlayScheduled(startTime);
     }
 
-    // Dirty/clean ambience helper
     void PlayEnvLoop(AudioClip clip)
     {
         if (envSource == null || clip == null) return;
@@ -344,14 +480,12 @@ public class RobotCollector : MonoBehaviour
         envSource.Play();
     }
 
-    // One-shot helper
     void PlayOneShot(AudioSource src, AudioClip clip)
     {
         if (src == null || clip == null) return;
         src.PlayOneShot(clip);
     }
 
-    // Timer tick helpers
     void StartTimerTick()
     {
         if (timerTickSource == null || timerTickClip == null) return;
