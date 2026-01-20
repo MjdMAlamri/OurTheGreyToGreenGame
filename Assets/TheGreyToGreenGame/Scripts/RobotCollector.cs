@@ -17,7 +17,11 @@ public class RobotCollector : MonoBehaviour
     private int boxes = 0;
     private int trash = 0;
 
-    private bool missionCompleted = false;
+    // Objectives completed => seed spawned
+    private bool objectivesCompleted = false;
+
+    // Seed picked => final win
+    private bool seedPickedUp = false;
 
     // Track completion so audio/checkmark happens ONCE
     private bool trashDone = false;
@@ -35,35 +39,41 @@ public class RobotCollector : MonoBehaviour
 
     [Header("UI System")]
     public TextMeshProUGUI timerTextUI;   // ONLY time
-    public TextMeshPro robotHeadText;     // optional
+    public TextMeshPro robotHeadText;
 
     [Header("UI Panels")]
     public GameObject startUIPanel;
     public GameObject loseUIPanel;
-    public GameObject winUIPanel; // optional
+    public GameObject winUIPanel; // show AFTER seed is picked
 
     [Header("To-Do List UI (Top)")]
+    public GameObject todoCanvasOrPanel; // whole ToDo canvas/panel to hide on win
     public TextMeshProUGUI todoTrashText;
     public TextMeshProUGUI todoBoxesText;
     public TextMeshProUGUI todoTiresText;
 
-    [Header("Checkmarks (enable when done)")]
+    [Header("Checkmarks")]
     public GameObject trashCheckMark;
     public GameObject boxesCheckMark;
     public GameObject tiresCheckMark;
 
     [Header("SFX (one-shots)")]
-    public AudioSource sfxSource;
-    public AudioClip objectiveCompleteClip; // plays when each objective completes (trash/box/tire)
+    public AudioSource sfxSource; // objective dings + seed appear
+    public AudioClip objectiveCompleteClip;
+    public AudioClip seedAppearClip;
 
-    [Header("Seed SFX (two stages)")]
-    public AudioClip seedAppearClip;   // plays when seed appears (after all objectives)
-    public AudioClip seedPlantedClip;  // plays when player collides with FinalSeed
+    [Header("Congrats SFX (scheduled)")]
+    public AudioSource congratsSource; // separate source for scheduling
+    public AudioClip congratsClip;     // plays with clean env at same time
 
     [Header("Environment Audio (looping)")]
-    public AudioSource envSource;      // separate AudioSource recommended (loop)
-    public AudioClip dirtyEnvLoop;     // plays while cleaning
-    public AudioClip cleanEnvLoop;     // plays after planting seed
+    public AudioSource envSource;      // loop ambience
+    public AudioClip dirtyEnvLoop;
+    public AudioClip cleanEnvLoop;
+
+    [Header("Timer Tick Audio (looping)")]
+    public AudioSource timerTickSource; // separate loop for "tic tic"
+    public AudioClip timerTickClip;
 
     void Start()
     {
@@ -85,8 +95,11 @@ public class RobotCollector : MonoBehaviour
         if (boxesCheckMark != null) boxesCheckMark.SetActive(false);
         if (tiresCheckMark != null) tiresCheckMark.SetActive(false);
 
-        // Start dirty environment loop (player is in cleaning phase)
+        // Start dirty ambience
         PlayEnvLoop(dirtyEnvLoop);
+
+        // Timer is paused until Start button
+        StopTimerTick();
 
         UpdateTimerUI();
         UpdateRobotText();
@@ -107,12 +120,13 @@ public class RobotCollector : MonoBehaviour
         {
             timeRemaining = 0;
             isTimerRunning = false;
-            UpdateTimerUI(); // stays "00:00" only
+            UpdateTimerUI();
 
-            if (!missionCompleted)
-            {
+            StopTimerTick();
+
+            // Lose only if seed not picked
+            if (!seedPickedUp)
                 ShowLoseUI();
-            }
         }
     }
 
@@ -123,6 +137,8 @@ public class RobotCollector : MonoBehaviour
         isTimerRunning = true;
         UpdateTimerUI();
 
+        StartTimerTick();
+
         if (startUIPanel != null) startUIPanel.SetActive(false);
         if (loseUIPanel != null) loseUIPanel.SetActive(false);
         if (winUIPanel != null) winUIPanel.SetActive(false);
@@ -130,6 +146,8 @@ public class RobotCollector : MonoBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
+        if (seedPickedUp) return;
+
         bool collectedSomething = false;
 
         if (other.CompareTag("Tire"))
@@ -152,20 +170,30 @@ public class RobotCollector : MonoBehaviour
         }
         else if (other.CompareTag("FinalSeed"))
         {
-            // Second stage: seed planted
-            if (sfxSource != null && seedPlantedClip != null)
-                sfxSource.PlayOneShot(seedPlantedClip);
+            seedPickedUp = true;
 
-            PlantTheSeed();
+            // Stop ticking once final action happens
+            StopTimerTick();
+
+            // Visual/world switch first
+            PlantTheSeedVisuals();
+
+            // Start clean env + congrats EXACTLY together
+            PlayCleanEnvAndCongratsTogether();
+
+            // Hide todo + show win
+            HideTodoAndShowWinUI();
+
             Destroy(other.gameObject);
+            return;
         }
 
         if (collectedSomething)
         {
             UpdateRobotText();
             UpdateTodoUI();
-            CheckObjectiveCompletion(); // audio + checkmarks
-            CheckProgress();            // seed appear logic
+            CheckObjectiveCompletion();
+            CheckProgress(); // spawns seed
         }
     }
 
@@ -173,7 +201,6 @@ public class RobotCollector : MonoBehaviour
     void UpdateTimerUI()
     {
         if (timerTextUI == null) return;
-
         int minutes = Mathf.FloorToInt(timeRemaining / 60);
         int seconds = Mathf.FloorToInt(timeRemaining % 60);
         timerTextUI.text = string.Format("{0:00}:{1:00}", minutes, seconds);
@@ -196,10 +223,8 @@ public class RobotCollector : MonoBehaviour
     {
         if (todoTrashText != null)
             todoTrashText.text = $"Collect {targetTrash} Trash ({Mathf.Clamp(trash, 0, targetTrash)}/{targetTrash})";
-
         if (todoBoxesText != null)
             todoBoxesText.text = $"Collect {targetBoxes} Boxes ({Mathf.Clamp(boxes, 0, targetBoxes)}/{targetBoxes})";
-
         if (todoTiresText != null)
             todoTiresText.text = $"Collect {targetTires} Tires ({Mathf.Clamp(tires, 0, targetTires)}/{targetTires})";
     }
@@ -211,50 +236,42 @@ public class RobotCollector : MonoBehaviour
         {
             trashDone = true;
             if (trashCheckMark != null) trashCheckMark.SetActive(true);
-            PlayObjectiveCompleteSFX();
+            PlayOneShot(sfxSource, objectiveCompleteClip);
         }
 
         if (!boxesDone && boxes >= targetBoxes)
         {
             boxesDone = true;
             if (boxesCheckMark != null) boxesCheckMark.SetActive(true);
-            PlayObjectiveCompleteSFX();
+            PlayOneShot(sfxSource, objectiveCompleteClip);
         }
 
         if (!tiresDone && tires >= targetTires)
         {
             tiresDone = true;
             if (tiresCheckMark != null) tiresCheckMark.SetActive(true);
-            PlayObjectiveCompleteSFX();
+            PlayOneShot(sfxSource, objectiveCompleteClip);
         }
     }
 
-    void PlayObjectiveCompleteSFX()
-    {
-        if (sfxSource != null && objectiveCompleteClip != null)
-            sfxSource.PlayOneShot(objectiveCompleteClip);
-    }
-
-    // When all objectives complete: seed appears + play "before seed" sound
+    // When all objectives complete: seed appears + play seed appear sound
     void CheckProgress()
     {
-        if (missionCompleted) return;
+        if (objectivesCompleted) return;
 
         if (tires >= targetTires && boxes >= targetBoxes && trash >= targetTrash)
         {
-            missionCompleted = true;
-            isTimerRunning = false; // stop timer when objectives complete (your original behavior)
+            objectivesCompleted = true;
+
+            // Keep your current behavior: stop timer here
+            isTimerRunning = false;
+            StopTimerTick();
 
             if (seedObject != null && !seedObject.activeSelf)
             {
                 seedObject.SetActive(true);
-
-                if (sfxSource != null && seedAppearClip != null)
-                    sfxSource.PlayOneShot(seedAppearClip);
+                PlayOneShot(sfxSource, seedAppearClip);
             }
-
-            // Do NOT change timer text. Show a win panel if you want:
-            if (winUIPanel != null) winUIPanel.SetActive(true);
 
             if (robotHeadText != null)
             {
@@ -266,16 +283,22 @@ public class RobotCollector : MonoBehaviour
 
     void ShowLoseUI()
     {
-        // timerTextUI remains time only
         if (loseUIPanel != null) loseUIPanel.SetActive(true);
-
         if (robotHeadText != null) robotHeadText.gameObject.SetActive(false);
+
+        // Optional: hide todo on lose too
+        // if (todoCanvasOrPanel != null) todoCanvasOrPanel.SetActive(false);
     }
 
-    // After player collides with FinalSeed:
-    // - switch environment objects/cameras
-    // - switch environment loop to clean sound
-    void PlantTheSeed()
+    void HideTodoAndShowWinUI()
+    {
+        if (todoCanvasOrPanel != null) todoCanvasOrPanel.SetActive(false);
+        if (winUIPanel != null) winUIPanel.SetActive(true);
+        isTimerRunning = false;
+    }
+
+    // Visual/world switch ONLY (no audio here)
+    void PlantTheSeedVisuals()
     {
         if (trashFolder != null) trashFolder.SetActive(false);
         if (forestFolder != null) forestFolder.SetActive(true);
@@ -283,25 +306,66 @@ public class RobotCollector : MonoBehaviour
         if (dirtyCamera != null) dirtyCamera.SetActive(false);
         if (cleanCamera != null) cleanCamera.SetActive(true);
 
-        // Switch looping environment sound to "clean"
-        PlayEnvLoop(cleanEnvLoop);
-
-        // Hide texts at the end
+        // Optional: hide texts at the end
         if (timerTextUI != null) timerTextUI.gameObject.SetActive(false);
         if (robotHeadText != null) robotHeadText.gameObject.SetActive(false);
     }
 
-    // Helper: play a looping environment clip safely
+    // Start clean env loop + congrats sound at the same DSP time (overlap guaranteed)
+    void PlayCleanEnvAndCongratsTogether()
+    {
+        if (envSource == null || cleanEnvLoop == null) return;
+        if (congratsSource == null || congratsClip == null) return;
+
+        double startTime = AudioSettings.dspTime + 0.05;
+
+        // ENV (loop)
+        envSource.Stop();
+        envSource.clip = cleanEnvLoop;
+        envSource.loop = true;
+        envSource.PlayScheduled(startTime);
+
+        // Congrats (one-shot)
+        congratsSource.Stop();
+        congratsSource.clip = congratsClip;
+        congratsSource.loop = false;
+        congratsSource.PlayScheduled(startTime);
+    }
+
+    // Dirty/clean ambience helper
     void PlayEnvLoop(AudioClip clip)
     {
         if (envSource == null || clip == null) return;
-
-        // If already playing this clip, do nothing
         if (envSource.clip == clip && envSource.isPlaying) return;
 
         envSource.Stop();
         envSource.clip = clip;
         envSource.loop = true;
         envSource.Play();
+    }
+
+    // One-shot helper
+    void PlayOneShot(AudioSource src, AudioClip clip)
+    {
+        if (src == null || clip == null) return;
+        src.PlayOneShot(clip);
+    }
+
+    // Timer tick helpers
+    void StartTimerTick()
+    {
+        if (timerTickSource == null || timerTickClip == null) return;
+        if (timerTickSource.isPlaying) return;
+
+        timerTickSource.Stop();
+        timerTickSource.clip = timerTickClip;
+        timerTickSource.loop = true;
+        timerTickSource.Play();
+    }
+
+    void StopTimerTick()
+    {
+        if (timerTickSource == null) return;
+        if (timerTickSource.isPlaying) timerTickSource.Stop();
     }
 }
