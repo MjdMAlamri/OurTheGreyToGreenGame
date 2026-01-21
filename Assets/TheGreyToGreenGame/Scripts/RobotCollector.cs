@@ -44,7 +44,7 @@ public class RobotCollector : MonoBehaviour
     public Rigidbody playerRb;
 
     [Header("UI System")]
-    public TextMeshProUGUI timerTextUI;    // نص التايمر
+    public TextMeshProUGUI timerTextUI;
 
     [Header("Todo List Texts (Top Right)")]
     public TextMeshProUGUI todoTrashText;
@@ -66,8 +66,16 @@ public class RobotCollector : MonoBehaviour
 
     [Header("SFX & Audio")]
     public AudioSource sfxSource;
+
+    // ✅ NEW: plays every time you pick up Tire/Box/Trash
+    public AudioClip pickupClip;
+
+    // existing
     public AudioClip objectiveCompleteClip;
     public AudioClip seedAppearClip;
+
+    // ✅ OPTIONAL: different sound when picking up the seed
+    public AudioClip seedPickupClip;
 
     public AudioSource congratsSource;
     public AudioClip congratsClip;
@@ -89,17 +97,14 @@ public class RobotCollector : MonoBehaviour
     {
         timeRemaining = gameDuration;
 
-        // إعداد البيئة
         if (forestFolder != null) forestFolder.SetActive(false);
         if (seedObject != null) seedObject.SetActive(false);
         if (trashFolder != null) trashFolder.SetActive(true);
 
-        // إخفاء الواجهات
         if (loseUIPanel != null) loseUIPanel.SetActive(false);
         if (winUIPanel != null) winUIPanel.SetActive(false);
         if (transitionCanvas != null) transitionCanvas.SetActive(false);
 
-        // إخفاء علامات الصح
         if (trashCheckMark != null) trashCheckMark.SetActive(false);
         if (boxesCheckMark != null) boxesCheckMark.SetActive(false);
         if (tiresCheckMark != null) tiresCheckMark.SetActive(false);
@@ -176,7 +181,8 @@ public class RobotCollector : MonoBehaviour
         UpdateTodoUI();
     }
 
-    void SetUIState(bool mapCanvas = false, bool howToPlay = false, bool timer = false, bool todo = false, bool cleanCam = false, bool dirtyCam = false, bool freeze = false)
+    void SetUIState(bool mapCanvas = false, bool howToPlay = false, bool timer = false, bool todo = false,
+                    bool cleanCam = false, bool dirtyCam = false, bool freeze = false)
     {
         if (this.mapCanvas != null) this.mapCanvas.SetActive(mapCanvas);
         if (this.howToPlayCanvas != null) this.howToPlayCanvas.SetActive(howToPlay);
@@ -194,6 +200,7 @@ public class RobotCollector : MonoBehaviour
         if (playerMovementScript != null) playerMovementScript.enabled = !freeze;
         if (playerRb != null)
         {
+            // NOTE: if you get errors here, replace linearVelocity with velocity
             playerRb.linearVelocity = Vector3.zero;
             playerRb.angularVelocity = Vector3.zero;
             playerRb.isKinematic = freeze;
@@ -211,31 +218,38 @@ public class RobotCollector : MonoBehaviour
         if (other.CompareTag("Tire"))
         {
             tires++;
-            Destroy(other.gameObject);
             collectedSomething = true;
+            Destroy(other.gameObject);
         }
         else if (other.CompareTag("Box"))
         {
             boxes++;
-            Destroy(other.gameObject);
             collectedSomething = true;
+            Destroy(other.gameObject);
         }
         else if (other.CompareTag("Trash"))
         {
             trash++;
-            Destroy(other.gameObject);
             collectedSomething = true;
+            Destroy(other.gameObject);
         }
         else if (other.CompareTag("FinalSeed"))
         {
             seedPickedUp = true;
+
+            // ✅ Play seed pickup sound (optional)
+            PlayOneShot(sfxSource, seedPickupClip != null ? seedPickupClip : pickupClip);
+
             Destroy(other.gameObject);
             StartCoroutine(SeedPickupTransition());
             return;
         }
 
+        // ✅ Play pickup sound every time you collect something
         if (collectedSomething)
         {
+            PlayOneShot(sfxSource, pickupClip);
+
             CheckObjectiveCompletion();
             CheckProgress();
             UpdateTodoUI();
@@ -277,31 +291,26 @@ public class RobotCollector : MonoBehaviour
         timerTextUI.text = string.Format("{0:00}:{1:00}", minutes, seconds);
     }
 
-    // 👇 التعديل: إخفاء الصح عند الانتهاء
     void UpdateTodoUI()
     {
         bool taskFinished = (tires >= targetTires && boxes >= targetBoxes && trash >= targetTrash);
 
         if (taskFinished)
         {
-            // 1. رسالة الفوز في النص الأول
             if (todoTrashText != null)
             {
                 todoTrashText.text = "Great Job!\nFind the Seed ";
                 todoTrashText.color = Color.green;
             }
-            // 2. إخفاء النصوص الأخرى
             if (todoBoxesText != null) todoBoxesText.text = "";
             if (todoTiresText != null) todoTiresText.text = "";
 
-            // 3. 👇 إخفاء علامات الصح (لأننا انتهينا)
             if (trashCheckMark != null) trashCheckMark.SetActive(false);
             if (boxesCheckMark != null) boxesCheckMark.SetActive(false);
             if (tiresCheckMark != null) tiresCheckMark.SetActive(false);
         }
         else
         {
-            // اللعب مستمر: عرض النصوص
             if (todoTrashText != null)
             {
                 todoTrashText.text = $"Collect Trash ({Mathf.Clamp(trash, 0, targetTrash)}/{targetTrash})";
@@ -348,6 +357,7 @@ public class RobotCollector : MonoBehaviour
     void CheckProgress()
     {
         if (objectivesCompleted) return;
+
         if (tires >= targetTires && boxes >= targetBoxes && trash >= targetTrash)
         {
             objectivesCompleted = true;
@@ -356,7 +366,7 @@ public class RobotCollector : MonoBehaviour
                 seedObject.SetActive(true);
                 PlayOneShot(sfxSource, seedAppearClip);
             }
-            UpdateTodoUI(); // لتطبيق التغييرات وإخفاء الصح فوراً
+            UpdateTodoUI();
         }
     }
 
@@ -410,10 +420,10 @@ public class RobotCollector : MonoBehaviour
         if (timerTickSource == null || timerTickClip == null) return;
         if (timerTickSource.isPlaying) return;
         timerTickSource.clip = timerTickClip;
-
         timerTickSource.loop = true;
         timerTickSource.Play();
     }
+
     void StopTimerTick()
     {
         if (timerTickSource != null) timerTickSource.Stop();
